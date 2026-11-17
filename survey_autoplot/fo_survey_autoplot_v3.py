@@ -1,10 +1,21 @@
 """
-Survey plan plotter for AutoCAD (fo_survey_autoplot v3: adds the frame and the frame labels).
+Survey plan plotter for AutoCAD (fo_survey_autoplot v4: multiline frame texts and a save prompt).
 
 Plots a survey polygon from Easting/Northing coordinates, then labels each line
 with its bearing and distance, the plot area, and the westernmost coordinates.
 Straight after plotting, it offers a menu of boundary lines so a simple road can be
 drawn along one of them. The road is labelled "ACCESS ROAD".
+
+New in v4:
+  - The title text (PLAN SHEWING LANDED PROPERTY ... AREA = ...) is now ONE multiline text (MText)
+    instead of one single-line text per line. Same wording, same centring.
+  - ORIGIN= UTM ZONE ... and AREA = ... are a separate multiline text just below the scale bar.
+  - The surveyor block (SURV. [PLACEHOLDER SURVEYOR], company, address, state) is also ONE multiline
+    text. Only the surveyor's name line is bold.
+  - The plan number at the top (in the plan number box) is a FIELD linked to the plan number in the
+    title block at the bottom left. Edit only the bottom one; the top one updates by itself.
+  - Last prompt: press 1 to save the drawing now. You type the file name and it is saved as a .dwg in
+    the Documents\\survey_autoplot folder (created if missing). Press 0 or Enter to skip and save later.
 
 New in v3:
   - After the road and the coordinates table you can press 1 to add the frame: an A4 portrait sheet
@@ -93,10 +104,17 @@ position of the sheet are worked out from the survey plan (the boundary) ONLY. T
 the coordinates table are not counted, so if they stick out of the border, use a larger scale number.
 The lines go on the layer frame. All the texts go on the layer frame_labels: placeholders such as
 ***/****/ 2026, [STATE] and [PLACEHOLDER SURVEYOR] (edit them in AutoCAD), plus the scale, origin, area
-and today's date. The surveyor's name is the only bold text. Each part of the scale bar is 10 m at 1/500
+and today's date. The title text (PLAN SHEWING LANDED PROPERTY ... AREA) is one multiline text, and so is
+the surveyor block; the surveyor's name is the only bold text. Each part of the scale bar is 10 m at 1/500
 and grows in proportion at other scales (20 m at 1/1000, 5 m at 1/250).
 The frame text is 2.6 mm tall on paper, which is a font height of 1.3 at 1/500. To print: A4 portrait,
 plot area = Window around the border, plot scale 1 mm = 0.5 drawing units for 1/500 (1 mm = 1 unit for 1/1000).
+
+SAVING
+The last prompt asks whether to save the drawing now. Press 0 or Enter to skip (you can always save
+later in AutoCAD), or 1 to save: type a file name and the drawing is saved as a .dwg in
+Documents\\survey_autoplot. The folder is created if needed, and an existing file is never overwritten
+(a number is added to the name instead).
 
 MORE THAN ONE JOB
 At the end, press 0 (or just press Enter) to end the program, or press 1 to plot another job.
@@ -173,7 +191,7 @@ FRAME_TITLE_LINES = (      # placeholder wording, edit in AutoCAD (or here)
     "[STATE] STATE, NIGERIA",
 )
 SCALE_BAR_CENTER_X = 167.9
-SCALE_BAR_Y = 238.9
+SCALE_BAR_Y = 238.9        # the scale bar sits just below the title text block; ORIGIN and AREA go under it
 SCALE_BAR_REF_SCALE = 500  # at this scale each part of the scale bar is SCALE_BAR_REF_STEP meters long ...
 SCALE_BAR_REF_STEP = 10.0  # ... and at any other scale it grows in proportion: 1/1000 -> 20 m, 1/250 -> 5 m
 NORTH_TOP_Y, NORTH_BOTTOM_Y, NORTH_CIRCLE_Y = 273.7, 224.9, 253.2
@@ -226,6 +244,24 @@ SPACE_WIDTH = 0.65         # assumed width of a space, in font heights
 AC_ALIGN_MIDDLE_LEFT = 9
 AC_ALIGN_MIDDLE_CENTER = 10
 AC_ALIGN_MIDDLE_RIGHT = 11
+
+# AutoCAD multiline text (MText) codes
+AC_ATTACH_TOP_CENTER = 2
+AC_ATTACH_MIDDLE_CENTER = 5
+AC_LINE_SPACING_EXACTLY = 2
+
+# Multiline frame texts (widths and spacing in mm on paper)
+TITLE_MTEXT_WIDTH = 80.0       # width of the title text box (the title cell is about 81 mm wide)
+SURVEYOR_MTEXT_WIDTH = 78.0    # width of the surveyor text box
+SURVEYOR_CENTER_Y = 17.3       # middle of the surveyor cell, on paper
+SURVEYOR_LINE_GAP = 4.1        # distance between the surveyor block lines
+
+# Saving
+SAVE_FOLDER_NAME = "survey_autoplot"   # created inside the user's Documents folder
+
+# ORIGIN and AREA text, under the scale bar (millimetres on paper)
+ORIGIN_AREA_TOP_Y = SCALE_BAR_Y - 1.9    # top of the ORIGIN / AREA multiline text
+ORIGIN_AREA_LINE_GAP = 4.3               # distance between its two lines
 
 _EPS = 1e-6
 
@@ -1049,6 +1085,26 @@ class Sheet:
                 print("Warning: could not make the surveyor's name bold.")
         return obj
 
+    def mtext(self, string, x_mm, y_mm, width_mm, height_mm, line_gap_mm, attach=AC_ATTACH_TOP_CENTER):
+        """One multiline text (MText) on the frame_labels layer. Lines are separated by \\P in `string`.
+
+        Line spacing is set to exactly `line_gap_mm` on paper so the lines sit where separate texts did.
+        """
+        x, y = self.to_model(x_mm, y_mm)
+        height = height_mm * self.k
+        obj = com_retry(lambda: self.ms.AddMText(APoint(x, y), width_mm * self.k, string),
+                        "adding a multiline text", timeout=15, delay=0.3)
+        obj.Height = height
+        obj.AttachmentPoint = attach
+        obj.InsertionPoint = APoint(x, y)
+        try:
+            obj.LineSpacingStyle = AC_LINE_SPACING_EXACTLY
+            obj.LineSpacingDistance = line_gap_mm * self.k
+        except Exception:
+            print("Warning: could not set the exact line spacing of a multiline text.")
+        set_layer(obj, LAYER_FRAME_LABELS)
+        return obj
+
 
 def content_bounds(points):
     """(xmin, ymin, xmax, ymax), in meters, of the survey plan (the boundary) only.
@@ -1214,16 +1270,30 @@ def draw_border_and_title_block(sheet):
     sheet.line(bx2, by1, bx2, by2)
 
 
-def draw_plan_number_box_labels(sheet, year):
+def plan_number_field(source):
+    """Field code that shows the text of another text object (a live link), or None if it cannot be made."""
+    try:
+        object_id = int(source.ObjectID)
+    except Exception:
+        return None
+    return f"%<\\AcObjProp Object(%<\\_ObjId {object_id}>%).TextString>%"
+
+
+def draw_plan_number_box_labels(sheet, year, source=None):
+    """The plan number box at the top. Its number is a field linked to `source`, the plan number
+    text in the title block at the bottom, so editing the bottom one updates this one."""
     x = (PLAN_BOX[0] + PLAN_BOX[2]) / 2.0
     sheet.text("PLAN   NO.", x, 288.4, TEXT_PLAN)
-    sheet.text(f"***/****/ {year}", x, 282.6, TEXT_PLAN)
+    field = plan_number_field(source) if source is not None else None
+    sheet.plan_no_linked = field is not None
+    sheet.text(field or f"***/****/ {year}", x, 282.6, TEXT_PLAN)
 
 
 def draw_title_block_labels(sheet, year, date_text):
+    """Title block texts. Returns the plan number text at the bottom left (the one to edit)."""
     left_x = (FRAME_BORDER[0] + TITLE_COL_1) / 2.0
     sheet.text("PLAN NO :", left_x, TITLE_BLOCK_TOP - 3.6, TEXT_BIG)
-    sheet.text(f"***/****/ {year}", left_x, TITLE_BLOCK_TOP - 13.6, TEXT_BIG)
+    plan_no = sheet.text(f"***/****/ {year}", left_x, TITLE_BLOCK_TOP - 13.6, TEXT_BIG)
     sheet.text("DEP NO :", left_x, LEFT_SPLIT_Y - 3.6, TEXT_BIG)
     sheet.text(f"SURV. /REC     / {year}", left_x, LEFT_SPLIT_Y - 13.6, TEXT_BIG)
 
@@ -1232,21 +1302,31 @@ def draw_title_block_labels(sheet, year, date_text):
     sheet.text(f"MADE BY ME ON {date_text}", left, 49.8, TEXT_STD, align=AC_ALIGN_MIDDLE_LEFT)
 
     right_x = (TITLE_COL_2 + FRAME_BORDER[2]) / 2.0
-    sheet.text("SURV. [PLACEHOLDER SURVEYOR]", right_x, 23.5, TEXT_NAME, bold=True)
-    sheet.text("[PLACEHOLDER COMPANY NAME]", right_x, 18.7, TEXT_SMALL)
-    sheet.text("[PLACEHOLDER ADDRESS]", right_x, 14.8, TEXT_SMALL)
-    sheet.text("[STATE] STATE, NIGERIA", right_x, 11.1, TEXT_SMALL)
+    # The surveyor block is ONE multiline text. Only its first line is bold (inline font code),
+    # and that line is larger (TEXT_NAME) than the rest (TEXT_SMALL).
+    bold_font = f"\\f{BOLD_FONT}|b1|i0|c0|p{BOLD_FONT_PITCH_FAMILY};"
+    name_scale = TEXT_NAME / TEXT_SMALL
+    surveyor_text = ("{" + bold_font + f"\\H{name_scale:g}x;SURV. [PLACEHOLDER SURVEYOR]" + "}"
+                     "\\P[PLACEHOLDER COMPANY NAME]"
+                     "\\P[PLACEHOLDER ADDRESS]"
+                     "\\P[STATE] STATE, NIGERIA")
+    sheet.mtext(surveyor_text, right_x, SURVEYOR_CENTER_Y, SURVEYOR_MTEXT_WIDTH, TEXT_SMALL,
+                SURVEYOR_LINE_GAP, AC_ATTACH_MIDDLE_CENTER)
+    return plan_no
 
 
 def draw_title_text(sheet, scale, points):
-    """Title lines at the top right, then the scale bar, the origin and the area."""
-    lines = FRAME_TITLE_LINES + (f"SCALE 1/{scale}",)
-    for i, line in enumerate(lines):
-        sheet.text(line, TITLE_CENTER_X, TITLE_TOP_Y - i * TITLE_LINE_GAP, TEXT_STD)
+    """Title text at the top right as ONE multiline text, then the scale bar just below it."""
+    lines = list(FRAME_TITLE_LINES)
+    lines.append(f"SCALE 1/{scale}")
+    sheet.mtext("\\P".join(lines), TITLE_CENTER_X, TITLE_TOP_Y + TEXT_STD / 2.0,
+                TITLE_MTEXT_WIDTH, TEXT_STD, TITLE_LINE_GAP, AC_ATTACH_TOP_CENTER)
     draw_scale_bar(sheet, scale)
-    sheet.text(f"ORIGIN= UTM ZONE {UTM_ZONE}", TITLE_CENTER_X, SCALE_BAR_Y - 3.2, TEXT_STD,
-               FRAME_GRID_COLOR)
-    sheet.text(area_text(points), TITLE_CENTER_X, SCALE_BAR_Y - 7.5, TEXT_STD, FRAME_AREA_COLOR)
+    # ORIGIN (blue) and AREA (red) are their own multiline text, just below the scale bar.
+    origin_area = (f"\\C{FRAME_GRID_COLOR};ORIGIN= UTM ZONE {UTM_ZONE}"
+                   f"\\P\\C{FRAME_AREA_COLOR};{area_text(points)}")
+    sheet.mtext(origin_area, TITLE_CENTER_X, ORIGIN_AREA_TOP_Y, TITLE_MTEXT_WIDTH, TEXT_STD,
+                ORIGIN_AREA_LINE_GAP, AC_ATTACH_TOP_CENTER)
 
 
 def draw_frame(sheet, points, today):
@@ -1254,8 +1334,8 @@ def draw_frame(sheet, points, today):
     year = today.year
     date_text = today.strftime("%d/%m/%Y")
     draw_border_and_title_block(sheet)
-    draw_plan_number_box_labels(sheet, year)
-    draw_title_block_labels(sheet, year, date_text)
+    plan_no = draw_title_block_labels(sheet, year, date_text)    # the bottom plan number is the one to edit
+    draw_plan_number_box_labels(sheet, year, plan_no)            # the top one is a field linked to it
     draw_title_text(sheet, sheet.scale, points)
 
     easting, northing, _, _ = westernmost_labels(points)
@@ -1294,6 +1374,13 @@ def frame_step(ms, doc, points, height):
     print(f"Frame added at 1/{scale}: lines on layer {LAYER_FRAME}, texts on layer {LAYER_FRAME_LABELS}.")
     units = scale / 1000.0
     print("The scale was worked out from the survey plan only (not the road, labels or table).")
+    if getattr(sheet, "plan_no_linked", False):
+        print("PLAN NO: edit ONLY the plan number in the title block at the bottom left. The one at the top "
+              "(in the plan number box) is linked to it and updates by itself. Do not edit the top one. "
+              "If it does not refresh straight away, type REGEN in AutoCAD.")
+    else:
+        print("PLAN NO: the top plan number could not be linked to the bottom one, so edit both "
+              "(the one in the plan number box at the top and the one in the title block at the bottom left).")
     print(f"To print: A4 portrait, plot area = Window around the border, "
           f"plot scale 1 mm = {units:g} drawing unit{'' if units == 1 else 's'}.")
     label_mm = height * 1000.0 / scale
@@ -1301,6 +1388,84 @@ def frame_step(ms, doc, points, height):
         print(f"Note: at 1/{scale} your plan labels print {label_mm:.1f} mm tall, but the frame text is "
               f"{TEXT_STD:g} mm. A font height of {TEXT_STD * scale / 1000.0:.2f} would match.")
     return sheet
+
+
+# ----------------------------------------------------------------------------
+# Save
+# ----------------------------------------------------------------------------
+def documents_folder():
+    """The user's real Documents folder (follows OneDrive redirection on Windows)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0 and buf.value:
+                return buf.value                      # 5 = CSIDL_PERSONAL (Documents)
+        except Exception:
+            pass
+    return os.path.join(os.path.expanduser("~"), "Documents")
+
+
+def clean_file_name(raw):
+    """Remove characters Windows does not allow and a typed .dwg ending."""
+    name = re.sub(r'[<>:"/\\|?*]+', "_", raw.strip()).strip(" .")
+    if name.lower().endswith(".dwg"):
+        name = name[:-4].strip(" .")
+    return name
+
+
+def ask_save_choice():
+    """Ask whether to save the drawing now. True = save."""
+    print("\nDo you want to save your survey-plot AutoCad file now? "
+          "Note you can always save later if you skip this option")
+    print("  Press 0 or Enter to skip")
+    print("  Press 1 to save now")
+    while True:
+        raw = ask("Your choice: ")
+        if raw is None:
+            print("Could not read your choice, so saving was skipped.")
+            return False
+        raw = raw.strip()
+        if raw in ("", "0"):
+            return False
+        if raw == "1":
+            return True
+        print("Please press 0 (or Enter) to skip, or 1 to save now.")
+
+
+def save_step(doc):
+    """Optional save. Asks for a file name and saves a .dwg in Documents\\survey_autoplot."""
+    if not ask_save_choice():
+        print("Not saved. You can save the drawing in AutoCAD whenever you like.")
+        return
+    while True:
+        raw = ask("Type the file name (e.g. Lot12_Survey), or press Enter to cancel: ")
+        if raw is None or not raw.strip():
+            print("Save cancelled. You can save the drawing in AutoCAD whenever you like.")
+            return
+        name = clean_file_name(raw)
+        if name:
+            break
+        print("That file name is not usable. Please try another one.")
+
+    folder = os.path.join(documents_folder(), SAVE_FOLDER_NAME)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError as err:
+        print(f"Could not create the folder {folder}: {err}")
+        return
+    path = os.path.join(folder, name + ".dwg")
+    number = 1
+    while os.path.exists(path):                       # never overwrite an earlier job
+        path = os.path.join(folder, f"{name}_{number}.dwg")
+        number += 1
+    try:
+        com_retry(lambda: doc.SaveAs(path), "saving the drawing", timeout=30, delay=1.0)
+    except RuntimeError as err:
+        print(f"Could not save the drawing: {err}")
+        return
+    print(f"Your work was saved at Documents/{SAVE_FOLDER_NAME}/{os.path.basename(path)}")
+    print(f"(full path: {path})")
 
 
 def zoom_extents(acad, doc):
@@ -1352,6 +1517,7 @@ def run_job(acad):
     finish_drawing(acad, doc)                   # zoom again so the table is included
     frame_step(ms, doc, points, height)         # optional: the frame, last, around the survey plan
     finish_drawing(acad, doc)                   # zoom again so the frame is included
+    save_step(doc)                              # optional: save the drawing in Documents\survey_autoplot
     print("Executed Successfully!")
     return acad
 
