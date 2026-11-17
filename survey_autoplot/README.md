@@ -1,6 +1,6 @@
 # Survey Plot: Coordinates to AutoCAD Survey Plan
 
-A Python script that turns a list of Easting/Northing coordinates into a finished survey plan in AutoCAD. Paste the coordinates, answer a few prompts, and the script draws and labels the plan for you, including an optional access road, a coordinates table and an A4 plan frame.
+A Python script that turns a list of Easting/Northing coordinates into a finished survey plan in AutoCAD. Paste the coordinates, answer a few prompts, and the script draws and labels the plan for you, including an optional access road, a coordinates table, an A4 plan frame and saving the finished drawing.
 
 **Author:** Francis Otia
 **Contact:** +2348161965054 | francisotia@gmail.com
@@ -20,6 +20,7 @@ From one list of coordinates the script:
   1. **Access road** along a boundary line you choose.
   2. **Coordinates table** (STATION, EASTING(m), NORTHING(m)).
   3. **Frame**: an A4 portrait sheet with border, title block, plan number box, scale bar, north arrow and a cross-hair at the westernmost point.
+  4. **Save**: save the drawing straight away as a `.dwg` in `Documents\survey_autoplot`, or skip and save later in AutoCAD.
 - Lets you plot another job straight after, with each job in its own drawing.
 
 ## Requirements
@@ -37,7 +38,7 @@ pip install pyautocad
 
 ```
 survey_plot/
-├── fo_survey_autoplot_v3.py     # the program
+├── fo_survey_autoplot_v4.py     # the program
 ├── test coordinates 1.csv       # sample coordinates for testing
 ├── test coordinates 2.csv       # sample coordinates for testing
 └── README.md
@@ -45,9 +46,9 @@ survey_plot/
 
 ## How to run
 
-1. Open `fo_survey_autoplot_v3.py` in IDLE (**Ctrl+O**) and press **F5** (Run > Run Module). You can also run it from Command Prompt:
+1. Open `fo_survey_autoplot_v4.py` in IDLE (**Ctrl+O**) and press **F5** (Run > Run Module). You can also run it from Command Prompt:
    ```
-   python fo_survey_autoplot_v3.py
+   python fo_survey_autoplot_v4.py
    ```
 2. Enter the **font height** for the plan labels, or press Enter for the default of `1.3`.
 3. **Paste the coordinates**, one point per line, **Easting before Northing**.
@@ -59,7 +60,7 @@ survey_plot/
    - **Command Prompt:** `Ctrl+Z`, then Enter
    - **IDLE / Linux / Mac:** `Ctrl+D`
 5. Wait for AutoCAD. The survey plan is drawn and zoomed into view.
-6. Answer the optional prompts (road, table, frame). Press **0 or Enter** to skip any of them.
+6. Answer the optional prompts (road, table, frame, save). Press **0 or Enter** to skip any of them.
 7. At the end, press **1** to plot another job, or **0 / Enter** to finish. Earlier drawings stay open in AutoCAD.
 
 ### Trying it with the sample files
@@ -89,7 +90,21 @@ Press `1` to add the frame, then type the plan scale (for example `500` for 1/50
 - Placeholder texts such as `***/****/ 2026`, `[STATE]` and `[PLACEHOLDER SURVEYOR]` are meant to be edited in AutoCAD. The scale, origin, area and today's date are filled in for you.
 - Frame text is 2.6 mm tall on paper, which is a font height of 1.3 at 1/500.
 
+**Plan number (linked):** the plan number appears twice on the sheet: in the plan number box at the top and in the title block at the bottom left (`PLAN NO :`). The top one is a **field** linked to the bottom one.
+
+- Edit **only the plan number in the title block at the bottom left**. The one at the top updates by itself, so do not edit it.
+- If the top number does not refresh straight away, type `REGEN` in AutoCAD.
+- If AutoCAD cannot create the link, the script says so in its report after drawing the frame. In that case edit both numbers by hand.
+
 **To print:** A4 portrait, plot area = Window around the border, and plot scale `1 mm = 0.5 drawing units` for 1/500 (`1 mm = 1 unit` for 1/1000).
+
+### 4. Save
+Press `1` to save the drawing now, or `0` / Enter to skip. You can always save later in AutoCAD.
+
+- You are asked to type a **file name** (for example `Lot12_Survey`). Press Enter without a name to cancel.
+- The drawing is saved as a `.dwg` in **`Documents\survey_autoplot`**. The folder is created if it does not exist, and it follows your Documents folder if it is redirected to OneDrive.
+- An existing file is never overwritten. If the name is already used, a number is added (`Lot12_Survey_1.dwg`).
+- The script prints where the file was saved, for example `Documents/survey_autoplot/Lot12_Survey.dwg`, and the full path.
 
 ## Layers
 
@@ -125,6 +140,8 @@ Near the top of the script there is a settings section. Some of the most useful 
 - **AutoCAD is slow to start:** the script waits up to 3 minutes for it. Wait for the message "AutoCAD is ready."
 - **An error appears:** read the message, fix the input if needed, and press `1` at the end to try again.
 - **Frame says the plan does not fit:** use a larger scale number, such as 1000 instead of 500.
+- **Top plan number did not change after editing the bottom one:** type `REGEN` in AutoCAD. Make sure you edited the plan number in the title block at the bottom left, not the one at the top.
+- **The drawing could not be saved:** check that the `Documents\survey_autoplot` folder can be written to, then save from AutoCAD with **Ctrl+S**.
 
 ---
 
